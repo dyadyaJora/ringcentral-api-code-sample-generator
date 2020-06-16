@@ -279,6 +279,7 @@ function generateLookupJson() {
         'py': 'python',
         'php': 'php',
         'rb': 'ruby',
+        'curl': 'curl',
     }
 
     var lookup = {}
