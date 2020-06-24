@@ -1,0 +1,34 @@
+# RingCentral Curl Code Samples
+
+
+<%
+for (const url in endpoints) {
+    const endpoint = endpoints[url]
+    for (const method in endpoint) {
+        const operation = endpoint[method];
+        
+        // Ignore OAuth endpoints
+        // ex: '/restapi/oauth/authorize' gets ignored
+        if (url.match(/^'?\/[^\/]*\/oauth/)) continue
+        %><%
+        const data = {
+            operation: operation,
+            url: url,
+            method: method
+        };
+        const sampleCodePath = samples.filePathToCurl(data, 'curl')
+        if(!fs.existsSync(sampleCodePath)) continue
+        %>
+## <%= operation.summary %>
+
+HTTP <%= method %> `<%= url %>`
+
+```bash
+<%- fs.readFileSync(sampleCodePath, 'utf8') -%>
+```
+
+[Try it out](https://developer.ringcentral.com/api-reference/<%= operation.tags[0].replace(/ /g, '-') %>/<%= operation.operationId %>) in API Explorer.
+        <%_
+    }
+}
+%>
