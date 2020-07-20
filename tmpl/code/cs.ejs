@@ -44,7 +44,7 @@ if (operation.parameters && (postParams = operation.parameters.find(param => par
 
     args.unshift(schemaCamel)
 
-    const def = defs.loadDefinition(schemaCamel)
+    const def = defs.loadDefinition(schemaPascal)
 
     const convert = (subdef) => Object.entries(subdef.properties).map(([name, property]) => {
         property.name = name
@@ -82,7 +82,7 @@ var r = await rc.<%= url.replace(/\/\{/g, "{").split('/').map(s => {
     // if there is no second matching group, meaning it was something like /restapi/
     // with no following "/{...}", then add "()."
     // Also necessary for endpoints like "...Extension(extensionId).CallLogSync" => "...CallLogSync()."
-    const suffix = match[2] ? `(${match[2]}).` : '().'
+    const suffix = match[2] ? `(${match[2]}).` : '().';
     // "message-store-configuration" => "MessageStoreConfiguration"
     return match[1].split('-').map(t => capFirst(t)).join('') + suffix
 }).join('') + capFirst(method) %>(<%= args.join(', ') %>);
