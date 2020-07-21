@@ -12,6 +12,10 @@
 const path = require('path')
 const yaml = require('js-yaml')
 const fs = require('fs')
+const https = require('./lib/https');
+const definitionsLib = require('./lib/definitions');
+const specLib = require('./lib/spec');
+const samplesLib = require('./lib/samples');
 
 if(require.main === module) {
     require('dotenv').config()
@@ -24,7 +28,11 @@ if(require.main === module) {
     run(commands)
 } else {
     module.exports = {
-        run: run
+        run,
+        generateDefs,
+        generateCodeSamples,
+        generateLookupJson,
+        generateMarkdown
     }
 }
 
@@ -63,8 +71,6 @@ async function downloadSpec() {
     return new Promise((resolve, reject) => {
         console.log(' + downloading spec')
 
-        const https = require(path.resolve(`${process.env.LIB_DIR}https`)) // Not to be confused with Node's built-in HTTPs module
-
         var spec
         https.get(process.env.SWAGGER_SPEC_REMOTE).then((data) => {
             spec = yaml.safeLoad(data)
@@ -77,31 +83,51 @@ async function downloadSpec() {
             delete spec.paths['/scim/ServiceProviderConfig']
 
             // https://git.ringcentral.com/platform/api-metadata-specs/issues/48
-            {
-                let post = spec.paths['/restapi/v1.0/account/{accountId}/greeting'].post
-                post.parameters = post.parameters.filter(p => p.name !== 'answeringRuleId')
-                post.parameters.push({
-                    name: 'answeringRule',
-                    in: 'formData',
-                    '$ref': '#/definitions/CustomCompanyGreetingAnsweringRuleInfo'
-                })
-            } {
-                let post = spec.paths['/restapi/v1.0/account/{accountId}/extension/{extensionId}/greeting'].post
-                post.parameters = post.parameters.filter(p => p.name !== 'answeringRuleId')
-                post.parameters.push({
-                    name: 'answeringRule',
-                    in: 'formData',
-                    '$ref': '#/definitions/CustomGreetingAnsweringRuleInfoRequest'
-                })
+            let apiGreeting = spec.paths['/restapi/v1.0/account/{accountId}/greeting'];
+            if (!!apiGreeting) {
+                let post = apiGreeting.post;
+                if (!!post) {
+                    post.parameters = post.parameters.filter(p => p.name !== 'answeringRuleId')
+                    post.parameters.push({
+                        name: 'answeringRule',
+                        in: 'formData',
+                        '$ref': '#/definitions/CustomCompanyGreetingAnsweringRuleInfo'
+                    });
+                }
+            }
+            let apiExtensionGreeting = spec.paths['/restapi/v1.0/account/{accountId}/extension/{extensionId}/greeting'];
+            if (!!apiExtensionGreeting) {
+                let post = apiExtensionGreeting.post
+                if (!!post) {
+                    post.parameters = post.parameters.filter(p => p.name !== 'answeringRuleId')
+                    post.parameters.push({
+                        name: 'answeringRule',
+                        in: 'formData',
+                        '$ref': '#/definitions/CustomGreetingAnsweringRuleInfoRequest'
+                    });
+                }
             }
 
-            spec.definitions['CustomCompanyGreetingAnsweringRuleInfo'] = spec.definitions['CustomGreetingAnsweringRuleInfoRequest'] = {
-                type: 'object',
-                properties: {
-                    id: {
-                        type: 'string'
+            if (!!spec.definitions) {
+                spec.definitions['CustomCompanyGreetingAnsweringRuleInfo'] = spec.definitions['CustomGreetingAnsweringRuleInfoRequest'] = {
+                    type: 'object',
+                    properties: {
+                        id: {
+                            type: 'string'
+                        }
                     }
                 }
+            } else if (!!spec.components && !!spec.components.schemas) {
+                spec.components.schemas['CustomCompanyGreetingAnsweringRuleInfo'] = spec.components.schemas['CustomGreetingAnsweringRuleInfoRequest'] = {
+                    type: 'object',
+                    properties: {
+                        id: {
+                            type: 'string'
+                        }
+                    }
+                }
+            } else {
+                console.log("[Error] Error finding any definitions or components");
             }
 
             fs.mkdirSync(path.resolve(process.env.DOWNLOADED_SPECS), { recursive: true })
@@ -128,7 +154,6 @@ async function downloadXTagGroups() {
 
         var specTemplate
 
-        const https = require(path.resolve(`${process.env.LIB_DIR}https`))
         https.get(process.env.X_TAG_GROUPS_REMOTE).then((data) => {
             xtaggroups = { 'x-tag-groups': yaml.safeLoad(data)['x-tag-groups'] }
             fs.writeFileSync(path.resolve(`${process.env.DOWNLOADED_SPECS}x-tag-groups.yml`), yaml.safeDump(xtaggroups))
@@ -149,18 +174,27 @@ async function downloadXTagGroups() {
 */
 function generateDefs() {
     console.log(' + generating definitions')
-
-    const dPath = path.resolve(process.env.DEFINITIONS)
-
-    const definitions = require(path.resolve(`${process.env.LIB_DIR}definitions`))
-    const spec = require(path.resolve(`${process.env.LIB_DIR}spec`)).load()
+    const dPath = path.resolve(process.env.DEFINITIONS);
+    const spec = specLib.load();
 
     fs.mkdirSync(dPath, { recursive: true })
 
     // Generate all Definitions
-    for (const definition in spec.definitions) {
-        definitions.generateFullDefinition(definition)
+    let definitions;
+    let isV3;
+    if (!!spec.definitions) {
+        isV3 = false;
+        definitions = spec.definitions
+    } else if (!!spec.components && !!spec.components.schemas) {
+        isV3 = true;
+        definitions = spec.components.schemas;
+    } else {
+        console.log("[ERROR] Could not found any definitions or components.");
+        return;
     }
+    Object.keys(definitions).forEach(modelName => {
+        definitionsLib.generateFullDefinition(modelName, isV3)
+    });
 
     console.log(' - definitions generated')
 }
@@ -198,7 +232,7 @@ function generateCodeSamples() {
                 const operation = endpoint[method]
                 if (operation.deprecated) continue
 
-                const tag = operation.tags[0]
+                // const tag = operation.tags[0]
 
                 const opDir = samples.dirPathTo(operation)
 
@@ -317,19 +351,29 @@ function generateLookupJson() {
 function generateMarkdown() {
     console.log(' + generating markdown')
 
-    const languages = fs.readdirSync(path.resolve(`${process.env.TMPL_DIR}markdown`)).map(file => {
+    const languages = fs.readdirSync(path.resolve(`./tmpl/markdown`)).map(file => {
         return file.substring(0, file.indexOf('.'))
+    })
+
+    let endpointsPaths = specLib.load().paths;
+    Object.keys(endpointsPaths).forEach(item => {
+        Object.keys(endpointsPaths[item]).forEach(method => {
+            let operation = endpointsPaths[item][method];
+            if (!operation || !operation.tags || !operation.tags.length) {
+                delete endpointsPaths[item][method];
+            }
+        });
     })
 
     const ejs = require('ejs')
 
     for (const language of languages) {
-        let md = ejs.render(fs.readFileSync(`${process.env.TMPL_DIR}/markdown/${language}.ejs`, 'utf8'), {
+        let md = ejs.render(fs.readFileSync(`./tmpl/markdown/${language}.ejs`, 'utf8'), {
             fs: fs,
             path: path,
-            samples: require(path.resolve(`${process.env.LIB_DIR}samples`)),
-            defs: require(path.resolve(`${process.env.LIB_DIR}definitions`)),
-            endpoints: require(path.resolve(`${process.env.LIB_DIR}spec`)).load().paths
+            samples: samplesLib,
+            defs: definitionsLib,
+            endpoints: endpointsPaths
         })
 
         fs.mkdirSync(path.resolve(process.env.MARKDOWN_OUTPUT), { recursive: true })
